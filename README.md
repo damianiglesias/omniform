@@ -3,8 +3,6 @@
   <img src="assets/logo.png" alt="Omniform" width="120"/>
 </p>
 
-<h1 align="center">Omniform</h1>
-
 > Convert video and audio from any platform to any format.
 
 A cross-platform desktop application for downloading and converting content
