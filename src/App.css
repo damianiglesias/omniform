@@ -183,6 +183,11 @@ body {
   margin-bottom: 2.5rem;
 }
 
+.url-input-wrap {
+  position: relative;
+  margin-bottom: 1.1rem;
+}
+
 .url-input {
   width: 100%;
   background: var(--bg);
@@ -191,8 +196,22 @@ body {
   font-family: var(--font-mono);
   font-size: 0.88rem;
   padding: 0.75rem 0.9rem;
-  margin-bottom: 1.1rem;
   transition: border-color 0.2s;
+}
+
+.auto-paste-badge {
+  position: absolute;
+  right: 0.7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--copper-bright);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.5rem;
+  pointer-events: none;
 }
 
 .url-input::placeholder {

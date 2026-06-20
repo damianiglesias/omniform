@@ -1,4 +1,5 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import type { OutputFormat, Quality } from "../types";
 
 interface Props {
@@ -29,13 +30,45 @@ const AUDIO_QUALITIES: { value: Quality; label: string }[] = [
   { value: "low", label: "Low (96kbps)" },
 ];
 
+const URL_PATTERN = /^https?:\/\/\S+$/i;
+
 export function UrlForm({ disabled, onSubmit }: Props) {
   const [url, setUrl] = useState("");
   const [format, setFormat] = useState<OutputFormat>("mp4");
   const [videoQuality, setVideoQuality] = useState<Quality>("best");
   const [audioQuality, setAudioQuality] = useState<Quality>("high");
+  const [autoPasted, setAutoPasted] = useState(false);
+  const lastClipboardRef = useRef<string | null>(null);
 
   const selectedKind = FORMATS.find((f) => f.value === format)?.kind ?? "video";
+
+  useEffect(() => {
+    async function checkClipboard() {
+      try {
+        const text = await readText();
+        if (!text) return;
+        const trimmed = text.trim();
+        if (!URL_PATTERN.test(trimmed)) return;
+        if (trimmed === lastClipboardRef.current) return;
+
+        lastClipboardRef.current = trimmed;
+
+        setUrl((current) => {
+          if (current.trim().length === 0) {
+            setAutoPasted(true);
+            return trimmed;
+          }
+          return current;
+        });
+      } catch {
+        // Clipboard may be unavailable or hold non-text content; safe to ignore.
+      }
+    }
+
+    checkClipboard();
+    window.addEventListener("focus", checkClipboard);
+    return () => window.removeEventListener("focus", checkClipboard);
+  }, []);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -44,19 +77,28 @@ export function UrlForm({ disabled, onSubmit }: Props) {
     const quality = selectedKind === "audio" ? audioQuality : videoQuality;
     onSubmit(trimmed, format, quality);
     setUrl("");
+    setAutoPasted(false);
+  }
+
+  function handleUrlChange(value: string) {
+    setUrl(value);
+    setAutoPasted(false);
   }
 
   return (
     <form className="url-form" onSubmit={handleSubmit}>
-      <input
-        type="text"
-        className="url-input"
-        placeholder="Paste a YouTube, TikTok, Instagram link..."
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        disabled={disabled}
-        spellCheck={false}
-      />
+      <div className="url-input-wrap">
+        <input
+          type="text"
+          className="url-input"
+          placeholder="Paste a YouTube, TikTok, Instagram link..."
+          value={url}
+          onChange={(e) => handleUrlChange(e.target.value)}
+          disabled={disabled}
+          spellCheck={false}
+        />
+        {autoPasted && <span className="auto-paste-badge">pasted from clipboard</span>}
+      </div>
 
       <div className="form-row">
         <div className="field-group">
