@@ -8,6 +8,9 @@
 A cross-platform desktop application for downloading and converting content
 from YouTube, TikTok, Instagram and other sources into common video and
 audio formats (MP4, WebM, MP3, WAV, FLAC, M4A, OGG).
+Think of it as a graphical alternative to using `yt-dlp` from the command
+line — same underlying capability, but with a proper interface, a queue,
+and zero setup.
 
 ## Features
 
