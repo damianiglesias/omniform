@@ -1,6 +1,6 @@
 [package]
 name = "omniform"
-version = "0.2.0"
+version = "0.1.0"
 description = "Convert video and audio from any platform to any format"
 authors = ["Damian Iglesias"]
 edition = "2021"

@@ -41,9 +41,11 @@ export default function App() {
     }
   }
 
-  function handleAdd(url: string, format: OutputFormat, quality: Quality) {
+  function handleAdd(urls: string[], format: OutputFormat, quality: Quality) {
     if (!outputDir) return;
-    addDownload(url, format, quality, outputDir);
+    for (const url of urls) {
+      addDownload(url, format, quality, outputDir);
+    }
   }
 
   const depsReady = deps.ytDlpReady && deps.ffmpegReady;

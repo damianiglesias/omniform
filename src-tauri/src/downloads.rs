@@ -9,6 +9,19 @@ use tokio::sync::Mutex;
 
 use crate::dependencies::{ffmpeg_path, yt_dlp_path};
 
+/// On Windows, child processes spawned from a windowed (GUI) app still pop up
+/// their own console window unless explicitly told not to. CREATE_NO_WINDOW
+/// (0x08000000) suppresses that. No-op on other platforms.
+#[cfg(target_os = "windows")]
+fn no_window(cmd: &mut tokio::process::Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn no_window(_cmd: &mut tokio::process::Command) {}
+
 #[derive(Clone, Serialize)]
 pub struct ProgressEvent {
     pub id: String,
@@ -102,13 +115,13 @@ fn format_to_args(format: &str, quality: &str) -> Vec<String> {
 /// Fetches the video title and thumbnail before starting the real download,
 /// using --dump-json to get an unambiguous, parseable format.
 async fn fetch_info(yt_dlp: &std::path::Path, url: &str) -> Option<VideoInfo> {
-    let output = tokio::process::Command::new(yt_dlp)
-        .args(["--dump-json", "--no-download", "--no-playlist", url])
+    let mut cmd = tokio::process::Command::new(yt_dlp);
+    cmd.args(["--dump-json", "--no-download", "--no-playlist", url])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .ok()?;
+        .stderr(Stdio::null());
+    no_window(&mut cmd);
+
+    let output = cmd.output().await.ok()?;
 
     if !output.status.success() {
         return None;
@@ -148,6 +161,50 @@ fn parse_progress_marker_line(line: &str) -> Option<(f64, Option<String>, Option
     };
 
     Some((progress, speed, eta))
+}
+
+fn friendly_error(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+
+    if lower.contains("video unavailable") || lower.contains("this video is not available") {
+        return "This video is unavailable.".to_string();
+    }
+    if lower.contains("private video") {
+        return "This video is private.".to_string();
+    }
+    if lower.contains("sign in to confirm") || lower.contains("age-restricted") {
+        return "This video is age-restricted and can't be downloaded.".to_string();
+    }
+    if lower.contains("unsupported url") || lower.contains("is not a valid url") {
+        return "This link isn't supported.".to_string();
+    }
+    if lower.contains("unable to download webpage")
+        || lower.contains("failed to resolve")
+        || lower.contains("name or service not known")
+        || lower.contains("network is unreachable")
+    {
+        return "Couldn't connect — check your internet connection.".to_string();
+    }
+    if lower.contains("404") || lower.contains("not found") {
+        return "This content no longer exists.".to_string();
+    }
+    if lower.contains("ffmpeg") {
+        return "Conversion failed while processing the file.".to_string();
+    }
+
+    let first_real_line = raw
+        .lines()
+        .find(|l| l.trim_start().starts_with("ERROR:"))
+        .unwrap_or_else(|| raw.lines().next().unwrap_or(raw));
+
+    let cleaned = first_real_line.trim_start_matches("ERROR:").trim();
+    if cleaned.is_empty() {
+        "Something went wrong during the download.".to_string()
+    } else if cleaned.len() > 160 {
+        format!("{}...", &cleaned[..160])
+    } else {
+        cleaned.to_string()
+    }
 }
 
 pub async fn start_download(
@@ -208,6 +265,7 @@ pub async fn start_download(
     cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    no_window(&mut cmd);
 
     let mut child = cmd
         .spawn()
@@ -289,7 +347,7 @@ pub async fn start_download(
                     "download://error",
                     ErrorEvent {
                         id: id_clone.clone(),
-                        message: err_text.trim().to_string(),
+                        message: friendly_error(err_text.trim()),
                     },
                 );
                 return;

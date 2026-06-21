@@ -1,10 +1,10 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import type { OutputFormat, Quality } from "../types";
 
 interface Props {
   disabled: boolean;
-  onSubmit: (url: string, format: OutputFormat, quality: Quality) => void;
+  onSubmit: (urls: string[], format: OutputFormat, quality: Quality) => void;
 }
 
 const FORMATS: { value: OutputFormat; label: string; kind: "video" | "audio" }[] = [
@@ -72,10 +72,13 @@ export function UrlForm({ disabled, onSubmit }: Props) {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return;
+    const urls = url
+      .split("\n")
+      .map((u) => u.trim())
+      .filter((u) => u.length > 0);
+    if (urls.length === 0) return;
     const quality = selectedKind === "audio" ? audioQuality : videoQuality;
-    onSubmit(trimmed, format, quality);
+    onSubmit(urls, format, quality);
     setUrl("");
     setAutoPasted(false);
   }
@@ -85,17 +88,25 @@ export function UrlForm({ disabled, onSubmit }: Props) {
     setAutoPasted(false);
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e as unknown as FormEvent);
+    }
+  }
+
   return (
     <form className="url-form" onSubmit={handleSubmit}>
       <div className="url-input-wrap">
-        <input
-          type="text"
+        <textarea
           className="url-input"
-          placeholder="Paste a YouTube, TikTok, Instagram link..."
+          placeholder="Paste one or more links, one per line..."
           value={url}
           onChange={(e) => handleUrlChange(e.target.value)}
+          onKeyDown={handleKeyDown}
           disabled={disabled}
           spellCheck={false}
+          rows={url.includes("\n") ? Math.min(6, url.split("\n").length) : 1}
         />
         {autoPasted && <span className="auto-paste-badge">pasted from clipboard</span>}
       </div>
@@ -151,7 +162,10 @@ export function UrlForm({ disabled, onSubmit }: Props) {
       </div>
 
       <button type="submit" className="submit-btn" disabled={disabled || !url.trim()}>
-        Add to queue
+        {(() => {
+          const count = url.split("\n").map((u) => u.trim()).filter(Boolean).length;
+          return count > 1 ? `Add ${count} to queue` : "Add to queue";
+        })()}
       </button>
     </form>
   );
