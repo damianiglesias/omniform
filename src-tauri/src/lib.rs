@@ -1,12 +1,13 @@
 mod dependencies;
 mod downloads;
+mod history;
 
 use std::sync::Arc;
-#[allow(unused_imports)]
 use tauri::{AppHandle, Manager, State};
 
 use dependencies::DependencyStatus;
 use downloads::DownloadRegistry;
+use history::HistoryEntry;
 
 #[tauri::command]
 fn check_dependencies(app: AppHandle) -> DependencyStatus {
@@ -49,6 +50,62 @@ async fn cancel_download(
     downloads::cancel_download(registry, id).await
 }
 
+#[tauri::command]
+async fn open_folder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+{
+    std::process::Command::new("explorer")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+}
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let parent = std::path::Path::new(&path)
+            .parent()
+            .unwrap_or(std::path::Path::new("/"))
+            .to_string_lossy()
+            .to_string();
+        std::process::Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_history(app: AppHandle) -> Vec<HistoryEntry> {
+    history::load(&app)
+}
+
+#[tauri::command]
+fn add_history_entry(app: AppHandle, entry: HistoryEntry) -> Result<(), String> {
+    history::add(&app, entry)
+}
+
+#[tauri::command]
+fn clear_history(app: AppHandle) -> Result<(), String> {
+    history::clear(&app)
+}
+
+#[tauri::command]
+async fn check_ytdlp_update(app: AppHandle) -> Result<bool, String> {
+    dependencies::check_for_update(&app).await
+}
+
+#[tauri::command]
+async fn update_ytdlp(app: AppHandle) -> Result<(), String> {
+    dependencies::update_ytdlp(app).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -68,6 +125,12 @@ pub fn run() {
             get_default_output_dir,
             start_download,
             cancel_download,
+            open_folder,
+            get_history,
+            add_history_entry,
+            clear_history,
+            check_ytdlp_update,
+            update_ytdlp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

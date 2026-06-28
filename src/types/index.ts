@@ -6,7 +6,6 @@ export type OutputFormat =
   | "m4a"
   | "webm"
   | "ogg";
-
 export type Quality =
   | "best"
   | "1080p"
@@ -16,7 +15,6 @@ export type Quality =
   | "high"
   | "medium"
   | "low";
-
 export type DownloadStatus =
   | "queued"
   | "fetching-info"
@@ -25,7 +23,6 @@ export type DownloadStatus =
   | "done"
   | "error"
   | "cancelled";
-
 export interface DownloadItem {
   id: string;
   url: string;
@@ -40,7 +37,6 @@ export interface DownloadItem {
   errorMessage: string | null;
   outputPath: string | null;
 }
-
 export interface DownloadProgressEvent {
   id: string;
   progress: number;
@@ -48,26 +44,30 @@ export interface DownloadProgressEvent {
   eta: string | null;
   status: DownloadStatus;
 }
-
 export interface DownloadInfoEvent {
   id: string;
   title: string;
   thumbnail: string | null;
 }
-
 export interface DownloadDoneEvent {
   id: string;
   outputPath: string;
 }
-
 export interface DownloadErrorEvent {
   id: string;
   message: string;
 }
-
 export interface DependencyStatus {
   ytDlpReady: boolean;
   ffmpegReady: boolean;
   downloading: boolean;
   message: string | null;
+}
+export interface HistoryEntry {
+  id: string;
+  title: string;
+  url: string;
+  format: string;
+  output_path: string;
+  timestamp: number;
 }

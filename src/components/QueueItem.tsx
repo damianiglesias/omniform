@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { DownloadItem } from "../types";
 
 interface Props {
@@ -23,6 +24,10 @@ export function QueueItem({ item, onCancel, onRemove }: Props) {
     item.status === "fetching-info" ||
     item.status === "queued";
 
+  function openFolder() {
+    if (item.outputPath) invoke("open_folder", { path: item.outputPath }).catch(() => {});
+  }
+
   return (
     <div className={`queue-item status-${item.status}`}>
       <div className="queue-thumb">
@@ -32,12 +37,10 @@ export function QueueItem({ item, onCancel, onRemove }: Props) {
           <div className="queue-thumb-placeholder" />
         )}
       </div>
-
       <div className="queue-main">
         <div className="queue-title" title={item.title ?? item.url}>
           {item.title ?? item.url}
         </div>
-
         <div className="queue-meta">
           <span className="queue-format">{item.format.toUpperCase()}</span>
           <span className="queue-status">{STATUS_LABEL[item.status]}</span>
@@ -48,11 +51,9 @@ export function QueueItem({ item, onCancel, onRemove }: Props) {
             <span className="queue-eta">ETA {item.eta}</span>
           )}
         </div>
-
         {item.status === "error" && item.errorMessage && (
           <div className="queue-error">{item.errorMessage}</div>
         )}
-
         <div className="progress-track">
           <div
             className="progress-fill"
@@ -60,8 +61,12 @@ export function QueueItem({ item, onCancel, onRemove }: Props) {
           />
         </div>
       </div>
-
       <div className="queue-actions">
+        {item.status === "done" && item.outputPath && (
+          <button className="queue-action-btn" onClick={openFolder}>
+            Open folder
+          </button>
+        )}
         {isActive ? (
           <button className="queue-action-btn" onClick={() => onCancel(item.id)}>
             Cancel

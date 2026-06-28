@@ -225,3 +225,53 @@ pub async fn ensure_dependencies(app: AppHandle) -> Result<(), String> {
     emit_status(&app, &status);
     Ok(())
 }
+pub async fn check_for_update(app: &AppHandle) -> Result<bool, String> {
+    let ytdlp = yt_dlp_path(app);
+    if !ytdlp.exists() {
+        return Ok(false);
+    }
+
+    let local = std::process::Command::new(&ytdlp)
+        .arg("--version")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let local_ver = String::from_utf8_lossy(&local.stdout).trim().to_string();
+
+    let client = reqwest::Client::builder()
+        .user_agent("omniform")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp: serde_json::Value = client
+        .get("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let latest = resp["tag_name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    Ok(!latest.is_empty() && latest != local_ver)
+}
+
+pub async fn update_ytdlp(app: AppHandle) -> Result<(), String> {
+    let mut status = current_status(&app);
+    status.downloading = true;
+    status.message = Some("Updating yt-dlp...".to_string());
+    emit_status(&app, &status);
+
+    let target = yt_dlp_path(&app);
+    let bytes = download_file(yt_dlp_download_url()).await?;
+    std::fs::write(&target, bytes).map_err(|e| e.to_string())?;
+    make_executable(&target)?;
+
+    status.downloading = false;
+    status.message = Some("yt-dlp updated.".to_string());
+    emit_status(&app, &status);
+    Ok(())
+}

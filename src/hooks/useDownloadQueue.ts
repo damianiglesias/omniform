@@ -40,33 +40,38 @@ export function useDownloadQueue() {
       );
     });
 
-    const unlistenProgress = listen<DownloadProgressEvent>(
-      "download://progress",
-      (e) => {
-        setItems((prev) =>
-          prev.map((it) =>
-            it.id === e.payload.id
-              ? {
-                  ...it,
-                  progress: e.payload.progress,
-                  speed: e.payload.speed,
-                  eta: e.payload.eta,
-                  status: e.payload.status,
-                }
-              : it
-          )
-        );
-      }
-    );
-
-    const unlistenDone = listen<DownloadDoneEvent>("download://done", (e) => {
+    const unlistenProgress = listen<DownloadProgressEvent>("download://progress", (e) => {
       setItems((prev) =>
         prev.map((it) =>
           it.id === e.payload.id
-            ? { ...it, status: "done", progress: 100, outputPath: e.payload.outputPath }
+            ? { ...it, progress: e.payload.progress, speed: e.payload.speed, eta: e.payload.eta, status: e.payload.status }
             : it
         )
       );
+    });
+
+    const unlistenDone = listen<DownloadDoneEvent>("download://done", (e) => {
+      setItems((prev) => {
+        const updated = prev.map((it) =>
+          it.id === e.payload.id
+            ? { ...it, status: "done" as const, progress: 100, outputPath: e.payload.outputPath }
+            : it
+        );
+        const item = updated.find((it) => it.id === e.payload.id);
+        if (item) {
+          invoke("add_history_entry", {
+            entry: {
+              id: item.id,
+              title: item.title ?? item.url,
+              url: item.url,
+              format: item.format,
+              output_path: e.payload.outputPath,
+              timestamp: Math.floor(Date.now() / 1000),
+            },
+          }).catch(() => {});
+        }
+        return updated;
+      });
     });
 
     const unlistenError = listen<DownloadErrorEvent>("download://error", (e) => {
@@ -100,18 +105,9 @@ export function useDownloadQueue() {
     async (url: string, format: OutputFormat, quality: Quality, outputDir: string) => {
       const id = makeId();
       const newItem: DownloadItem = {
-        id,
-        url,
-        title: null,
-        thumbnail: null,
-        format,
-        quality,
-        status: "queued",
-        progress: 0,
-        speed: null,
-        eta: null,
-        errorMessage: null,
-        outputPath: null,
+        id, url, title: null, thumbnail: null, format, quality,
+        status: "queued", progress: 0, speed: null, eta: null,
+        errorMessage: null, outputPath: null,
       };
       setItems((prev) => [...prev, newItem]);
       try {
@@ -119,9 +115,7 @@ export function useDownloadQueue() {
       } catch (err) {
         setItems((prev) =>
           prev.map((it) =>
-            it.id === id
-              ? { ...it, status: "error", errorMessage: String(err) }
-              : it
+            it.id === id ? { ...it, status: "error", errorMessage: String(err) } : it
           )
         );
       }
@@ -142,18 +136,8 @@ export function useDownloadQueue() {
   }, []);
 
   const clearFinished = useCallback(() => {
-    setItems((prev) =>
-      prev.filter((it) => it.status !== "done" && it.status !== "cancelled")
-    );
+    setItems((prev) => prev.filter((it) => it.status !== "done" && it.status !== "cancelled"));
   }, []);
 
-  return {
-    items,
-    deps,
-    ensureDependencies,
-    addDownload,
-    cancelDownload,
-    removeItem,
-    clearFinished,
-  };
+  return { items, deps, ensureDependencies, addDownload, cancelDownload, removeItem, clearFinished };
 }
