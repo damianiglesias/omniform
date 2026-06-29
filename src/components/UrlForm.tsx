@@ -73,9 +73,9 @@ export function UrlForm({ disabled, onSubmit }: Props) {
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const urls = url
-      .split("\n")
-      .map((u) => u.trim())
-      .filter((u) => u.length > 0);
+  .split("\n")
+  .map((u) => u.trim())
+  .filter((u) => URL_PATTERN.test(u));
     if (urls.length === 0) return;
     const quality = selectedKind === "audio" ? audioQuality : videoQuality;
     onSubmit(urls, format, quality);
