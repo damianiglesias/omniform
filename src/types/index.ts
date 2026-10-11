@@ -37,6 +37,27 @@ export interface DownloadItem {
   errorMessage: string | null;
   outputPath: string | null;
 }
+export interface DownloadOptions {
+  playlist: boolean;
+  playlistLimit: number | null;
+  subtitles: boolean;
+  subtitleLanguage: string;
+}
+export interface MediaProbe {
+  title: string;
+  thumbnail: string | null;
+  duration: number | null;
+  playlistCount: number | null;
+  availableHeights: string[];
+  subtitleLanguages: string[];
+}
+export interface DiagnosticInfo {
+  binPath: string;
+  ytDlpPath: string;
+  ffmpegPath: string;
+  ytDlpVersion: string | null;
+  ffmpegVersion: string | null;
+}
 export interface DownloadProgressEvent {
   id: string;
   progress: number;

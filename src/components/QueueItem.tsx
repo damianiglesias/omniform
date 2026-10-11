@@ -5,6 +5,9 @@ interface Props {
   item: DownloadItem;
   onCancel: (id: string) => void;
   onRemove: (id: string) => void;
+  onMove: (id: string, direction: -1 | 1) => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
 }
 
 const STATUS_LABEL: Record<DownloadItem["status"], string> = {
@@ -17,7 +20,7 @@ const STATUS_LABEL: Record<DownloadItem["status"], string> = {
   cancelled: "Cancelled",
 };
 
-export function QueueItem({ item, onCancel, onRemove }: Props) {
+export function QueueItem({ item, onCancel, onRemove, onMove, canMoveUp, canMoveDown }: Props) {
   const isActive =
     item.status === "downloading" ||
     item.status === "converting" ||
@@ -43,7 +46,7 @@ export function QueueItem({ item, onCancel, onRemove }: Props) {
         </div>
         <div className="queue-meta">
           <span className="queue-format">{item.format.toUpperCase()}</span>
-          <span className="queue-status">{STATUS_LABEL[item.status]}</span>
+          <span className={`queue-status status-label-${item.status}`}>{STATUS_LABEL[item.status]}</span>
           {item.speed && item.status === "downloading" && (
             <span className="queue-speed">{item.speed}</span>
           )}
@@ -62,9 +65,13 @@ export function QueueItem({ item, onCancel, onRemove }: Props) {
         </div>
       </div>
       <div className="queue-actions">
+        {item.status === "queued" && <div className="queue-order">
+          <button className="queue-action-btn icon-action" onClick={() => onMove(item.id, -1)} disabled={!canMoveUp} aria-label="Move up">↑</button>
+          <button className="queue-action-btn icon-action" onClick={() => onMove(item.id, 1)} disabled={!canMoveDown} aria-label="Move down">↓</button>
+        </div>}
         {item.status === "done" && item.outputPath && (
           <button className="queue-action-btn" onClick={openFolder}>
-            Open folder
+            Show in folder
           </button>
         )}
         {isActive ? (

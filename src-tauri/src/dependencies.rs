@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Clone, Serialize)]
@@ -51,6 +52,12 @@ pub fn current_status(app: &AppHandle) -> DependencyStatus {
 
 fn emit_status(app: &AppHandle, status: &DependencyStatus) {
     let _ = app.emit("deps://status", status.clone());
+}
+
+/// Prevent concurrent startup calls from racing to write the same binaries.
+fn dependency_install_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 fn yt_dlp_download_url() -> &'static str {
@@ -115,6 +122,9 @@ async fn install_yt_dlp(app: &AppHandle) -> Result<(), String> {
     let bytes = download_file(yt_dlp_download_url()).await?;
     std::fs::write(&target, bytes).map_err(|e| e.to_string())?;
     make_executable(&target)?;
+    if !target.is_file() || std::fs::metadata(&target).map_err(|e| e.to_string())?.len() == 0 {
+        return Err("ffmpeg was not extracted to the application bin folder".to_string());
+    }
     Ok(())
 }
 
@@ -171,22 +181,32 @@ fn extract_ffmpeg_zip(bytes: &[u8], dir: &Path, target: &Path) -> Result<(), Str
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
 
+    let temporary_target = target.with_extension("download");
+    let _ = std::fs::remove_file(&temporary_target);
+
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
         let name = file.name().to_string();
-        let is_ffmpeg_bin = name.ends_with("ffmpeg.exe") || name.ends_with("/ffmpeg");
+        let is_ffmpeg_bin = if cfg!(target_os = "windows") {
+            name.ends_with("/bin/ffmpeg.exe") || name == "ffmpeg.exe"
+        } else {
+            name.ends_with("/ffmpeg") || name == "ffmpeg"
+        };
         if is_ffmpeg_bin {
-            let mut out = std::fs::File::create(target).map_err(|e| e.to_string())?;
+            let mut out = std::fs::File::create(&temporary_target).map_err(|e| e.to_string())?;
             std::io::copy(&mut file, &mut out).map_err(|e| e.to_string())?;
-            break;
+            drop(out);
+            std::fs::rename(&temporary_target, target).map_err(|e| e.to_string())?;
+            return Ok(());
         }
     }
 
     let _ = dir;
-    Ok(())
+    Err("the ffmpeg archive did not contain a Windows ffmpeg executable".to_string())
 }
 
 pub async fn ensure_dependencies(app: AppHandle) -> Result<(), String> {
+    let _install_guard = dependency_install_lock().lock().await;
     let mut status = current_status(&app);
 
     if status.yt_dlp_ready && status.ffmpeg_ready {
@@ -251,10 +271,7 @@ pub async fn check_for_update(app: &AppHandle) -> Result<bool, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let latest = resp["tag_name"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let latest = resp["tag_name"].as_str().unwrap_or("").to_string();
 
     Ok(!latest.is_empty() && latest != local_ver)
 }

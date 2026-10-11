@@ -10,6 +10,7 @@ import type {
   DownloadProgressEvent,
   OutputFormat,
   Quality,
+  DownloadOptions,
 } from "../types";
 
 function makeId(): string {
@@ -98,11 +99,21 @@ export function useDownloadQueue() {
   }, []);
 
   const ensureDependencies = useCallback(async () => {
-    await invoke("ensure_dependencies");
+    try {
+      await invoke("ensure_dependencies");
+      const status = await invoke<DependencyStatus>("check_dependencies");
+      setDeps(status);
+    } catch (error) {
+      setDeps((current) => ({
+        ...current,
+        downloading: false,
+        message: `Setup failed: ${String(error)}`,
+      }));
+    }
   }, []);
 
   const addDownload = useCallback(
-    async (url: string, format: OutputFormat, quality: Quality, outputDir: string) => {
+    async (url: string, format: OutputFormat, quality: Quality, outputDir: string, options: DownloadOptions) => {
       const id = makeId();
       const newItem: DownloadItem = {
         id, url, title: null, thumbnail: null, format, quality,
@@ -111,7 +122,7 @@ export function useDownloadQueue() {
       };
       setItems((prev) => [...prev, newItem]);
       try {
-        await invoke("start_download", { id, url, format, quality, outputDir });
+        await invoke("start_download", { id, url, format, quality, outputDir, options });
       } catch (err) {
         setItems((prev) =>
           prev.map((it) =>
@@ -135,9 +146,20 @@ export function useDownloadQueue() {
     setItems((prev) => prev.filter((it) => it.id !== id));
   }, []);
 
+  const moveItem = useCallback((id: string, direction: -1 | 1) => {
+    setItems((previous) => {
+      const index = previous.findIndex((item) => item.id === id);
+      const destination = index + direction;
+      if (index < 0 || destination < 0 || destination >= previous.length) return previous;
+      const next = [...previous];
+      [next[index], next[destination]] = [next[destination], next[index]];
+      return next;
+    });
+  }, []);
+
   const clearFinished = useCallback(() => {
     setItems((prev) => prev.filter((it) => it.status !== "done" && it.status !== "cancelled"));
   }, []);
 
-  return { items, deps, ensureDependencies, addDownload, cancelDownload, removeItem, clearFinished };
+  return { items, deps, ensureDependencies, addDownload, cancelDownload, removeItem, moveItem, clearFinished };
 }

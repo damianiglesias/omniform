@@ -14,7 +14,6 @@ use crate::dependencies::{ffmpeg_path, yt_dlp_path};
 /// (0x08000000) suppresses that. No-op on other platforms.
 #[cfg(target_os = "windows")]
 fn no_window(cmd: &mut tokio::process::Command) {
-    use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
@@ -62,11 +61,51 @@ struct VideoInfo {
     thumbnail: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct DownloadOptions {
+    pub playlist: bool,
+    #[serde(rename = "playlistLimit")]
+    pub playlist_limit: Option<u32>,
+    pub subtitles: bool,
+    #[serde(rename = "subtitleLanguage")]
+    pub subtitle_language: String,
+}
+
+#[derive(Serialize)]
+pub struct MediaProbe {
+    pub title: String,
+    pub thumbnail: Option<String>,
+    pub duration: Option<u64>,
+    #[serde(rename = "playlistCount")]
+    pub playlist_count: Option<u32>,
+    #[serde(rename = "availableHeights")]
+    pub available_heights: Vec<String>,
+    #[serde(rename = "subtitleLanguages")]
+    pub subtitle_languages: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ProbeJson {
+    title: Option<String>,
+    thumbnail: Option<String>,
+    duration: Option<u64>,
+    playlist_count: Option<u32>,
+    formats: Option<Vec<ProbeFormat>>,
+    subtitles: Option<serde_json::Map<String, serde_json::Value>>,
+    automatic_captions: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Deserialize)]
+struct ProbeFormat {
+    height: Option<u32>,
+}
+
 /// Fixed progress template we fully control, with a unique marker
 /// at the start of the line so it cannot be confused with other yt-dlp output.
 /// Fields are separated by "|" in a known order.
 const PROGRESS_MARKER: &str = "OMNIFORM_PROGRESS";
-const PROGRESS_TEMPLATE: &str = "OMNIFORM_PROGRESS|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s";
+const PROGRESS_TEMPLATE: &str =
+    "OMNIFORM_PROGRESS|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s";
 
 fn audio_quality_to_bitrate(quality: &str) -> &'static str {
     match quality {
@@ -87,6 +126,8 @@ fn format_to_args(format: &str, quality: &str) -> Vec<String> {
             format.to_string(),
             "--audio-quality".to_string(),
             audio_quality_to_bitrate(quality).to_string(),
+            "--embed-metadata".to_string(),
+            "--embed-thumbnail".to_string(),
         ]
     } else {
         let height = match quality {
@@ -97,9 +138,9 @@ fn format_to_args(format: &str, quality: &str) -> Vec<String> {
         };
 
         let format_selector = match height {
-            Some(h) => format!(
-                "bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/best[height<={h}]"
-            ),
+            Some(h) => {
+                format!("bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/best[height<={h}]")
+            }
             None => "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best".to_string(),
         };
 
@@ -130,6 +171,60 @@ async fn fetch_info(yt_dlp: &std::path::Path, url: &str) -> Option<VideoInfo> {
     let text = String::from_utf8_lossy(&output.stdout);
     let first_line = text.lines().next()?;
     serde_json::from_str::<VideoInfo>(first_line).ok()
+}
+
+pub async fn inspect_url(app: AppHandle, url: String) -> Result<MediaProbe, String> {
+    let yt_dlp = yt_dlp_path(&app);
+    if !yt_dlp.is_file() {
+        return Err("yt-dlp is not installed yet".to_string());
+    }
+    let mut cmd = tokio::process::Command::new(yt_dlp);
+    cmd.args([
+        "--dump-single-json",
+        "--no-download",
+        "--flat-playlist",
+        &url,
+    ])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    no_window(&mut cmd);
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("could not inspect link: {e}"))?;
+    if !output.status.success() {
+        return Err(friendly_error(&String::from_utf8_lossy(&output.stderr)));
+    }
+    let value: ProbeJson = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "couldn't read the available download options".to_string())?;
+    let mut heights: Vec<u32> = value
+        .formats
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|format| format.height)
+        .collect();
+    heights.sort_unstable_by(|a, b| b.cmp(a));
+    heights.dedup();
+    let mut subtitles: Vec<String> = value
+        .subtitles
+        .into_iter()
+        .flatten()
+        .chain(value.automatic_captions.into_iter().flatten())
+        .map(|(language, _)| language)
+        .collect();
+    subtitles.sort();
+    subtitles.dedup();
+    Ok(MediaProbe {
+        title: value.title.unwrap_or_else(|| "Untitled video".to_string()),
+        thumbnail: value.thumbnail,
+        duration: value.duration,
+        playlist_count: value.playlist_count,
+        available_heights: heights
+            .into_iter()
+            .map(|height| format!("{height}p"))
+            .collect(),
+        subtitle_languages: subtitles,
+    })
 }
 
 fn parse_progress_marker_line(line: &str) -> Option<(f64, Option<String>, Option<String>)> {
@@ -215,6 +310,7 @@ pub async fn start_download(
     format: String,
     quality: String,
     output_dir: String,
+    options: DownloadOptions,
 ) -> Result<(), String> {
     let yt_dlp = yt_dlp_path(&app);
     let ffmpeg = ffmpeg_path(&app);
@@ -249,7 +345,6 @@ pub async fn start_download(
 
     let mut args: Vec<String> = vec![
         "--newline".to_string(),
-        "--no-playlist".to_string(),
         "--ffmpeg-location".to_string(),
         ffmpeg.to_string_lossy().to_string(),
         "-o".to_string(),
@@ -257,6 +352,26 @@ pub async fn start_download(
         "--progress-template".to_string(),
         PROGRESS_TEMPLATE.to_string(),
     ];
+
+    if !options.playlist {
+        args.push("--no-playlist".to_string());
+    } else if let Some(limit) = options.playlist_limit.filter(|limit| *limit > 0) {
+        args.extend(["--playlist-end".to_string(), limit.to_string()]);
+    }
+
+    if options.subtitles {
+        args.extend([
+            "--write-subs".to_string(),
+            "--write-auto-subs".to_string(),
+            "--sub-langs".to_string(),
+            options.subtitle_language,
+            "--convert-subs".to_string(),
+            "srt".to_string(),
+        ]);
+        if !["mp3", "wav", "flac", "m4a", "ogg"].contains(&format.as_str()) {
+            args.push("--embed-subs".to_string());
+        }
+    }
 
     args.extend(format_to_args(&format, &quality));
     args.push(url.clone());

@@ -2,8 +2,9 @@ mod dependencies;
 mod downloads;
 mod history;
 
+use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use dependencies::DependencyStatus;
 use downloads::DownloadRegistry;
@@ -36,9 +37,15 @@ async fn start_download(
     format: String,
     quality: String,
     output_dir: String,
+    options: downloads::DownloadOptions,
 ) -> Result<(), String> {
     let registry = registry.inner().clone();
-    downloads::start_download(app, registry, id, url, format, quality, output_dir).await
+    downloads::start_download(app, registry, id, url, format, quality, output_dir, options).await
+}
+
+#[tauri::command]
+async fn inspect_url(app: AppHandle, url: String) -> Result<downloads::MediaProbe, String> {
+    downloads::inspect_url(app, url).await
 }
 
 #[tauri::command]
@@ -53,12 +60,12 @@ async fn cancel_download(
 #[tauri::command]
 async fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-{
-    std::process::Command::new("explorer")
-        .arg(&path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-}
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
@@ -106,6 +113,45 @@ async fn update_ytdlp(app: AppHandle) -> Result<(), String> {
     dependencies::update_ytdlp(app).await
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticInfo {
+    bin_path: String,
+    yt_dlp_path: String,
+    ffmpeg_path: String,
+    yt_dlp_version: Option<String>,
+    ffmpeg_version: Option<String>,
+}
+
+async fn binary_version(path: &std::path::Path, arg: &str) -> Option<String> {
+    let output = tokio::process::Command::new(path)
+        .arg(arg)
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .map(str::to_string)
+}
+
+#[tauri::command]
+async fn get_diagnostics(app: AppHandle) -> DiagnosticInfo {
+    let bin = dependencies::bin_dir(&app);
+    let yt_dlp = dependencies::yt_dlp_path(&app);
+    let ffmpeg = dependencies::ffmpeg_path(&app);
+    DiagnosticInfo {
+        bin_path: bin.to_string_lossy().to_string(),
+        yt_dlp_version: binary_version(&yt_dlp, "--version").await,
+        ffmpeg_version: binary_version(&ffmpeg, "-version").await,
+        yt_dlp_path: yt_dlp.to_string_lossy().to_string(),
+        ffmpeg_path: ffmpeg.to_string_lossy().to_string(),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -122,6 +168,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_dependencies,
             ensure_dependencies,
+            inspect_url,
             get_default_output_dir,
             start_download,
             cancel_download,
@@ -131,6 +178,7 @@ pub fn run() {
             clear_history,
             check_ytdlp_update,
             update_ytdlp,
+            get_diagnostics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

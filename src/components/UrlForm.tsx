@@ -1,10 +1,11 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
-import type { OutputFormat, Quality } from "../types";
+import { invoke } from "@tauri-apps/api/core";
+import type { DownloadOptions, MediaProbe, OutputFormat, Quality } from "../types";
 
 interface Props {
   disabled: boolean;
-  onSubmit: (urls: string[], format: OutputFormat, quality: Quality) => void;
+  onSubmit: (urls: string[], format: OutputFormat, quality: Quality, options: DownloadOptions) => void;
 }
 
 const FORMATS: { value: OutputFormat; label: string; kind: "video" | "audio" }[] = [
@@ -38,6 +39,14 @@ export function UrlForm({ disabled, onSubmit }: Props) {
   const [videoQuality, setVideoQuality] = useState<Quality>("best");
   const [audioQuality, setAudioQuality] = useState<Quality>("high");
   const [autoPasted, setAutoPasted] = useState(false);
+  const [probe, setProbe] = useState<MediaProbe | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+  const [playlist, setPlaylist] = useState(false);
+  const [playlistLimit, setPlaylistLimit] = useState(0);
+  const [subtitles, setSubtitles] = useState(false);
+  const [subtitleLanguage, setSubtitleLanguage] = useState("en");
+  const [isDragging, setIsDragging] = useState(false);
   const lastClipboardRef = useRef<string | null>(null);
 
   const selectedKind = FORMATS.find((f) => f.value === format)?.kind ?? "video";
@@ -70,6 +79,21 @@ export function UrlForm({ disabled, onSubmit }: Props) {
     return () => window.removeEventListener("focus", checkClipboard);
   }, []);
 
+  useEffect(() => {
+    const onDragOver = (event: DragEvent) => { event.preventDefault(); setIsDragging(true); };
+    const onDragLeave = (event: DragEvent) => { if (event.relatedTarget === null) setIsDragging(false); };
+    const onDrop = (event: DragEvent) => {
+      event.preventDefault();
+      setIsDragging(false);
+      const text = event.dataTransfer?.getData("text/uri-list") || event.dataTransfer?.getData("text/plain");
+      if (text) handleUrlChange(text.trim());
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => { window.removeEventListener("dragover", onDragOver); window.removeEventListener("dragleave", onDragLeave); window.removeEventListener("drop", onDrop); };
+  }, []);
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const urls = url
@@ -78,7 +102,7 @@ export function UrlForm({ disabled, onSubmit }: Props) {
   .filter((u) => URL_PATTERN.test(u));
     if (urls.length === 0) return;
     const quality = selectedKind === "audio" ? audioQuality : videoQuality;
-    onSubmit(urls, format, quality);
+    onSubmit(urls, format, quality, { playlist, playlistLimit: playlistLimit || null, subtitles, subtitleLanguage });
     setUrl("");
     setAutoPasted(false);
   }
@@ -86,6 +110,26 @@ export function UrlForm({ disabled, onSubmit }: Props) {
   function handleUrlChange(value: string) {
     setUrl(value);
     setAutoPasted(false);
+    setProbe(null);
+    setInspectError(null);
+  }
+
+  async function inspectLink() {
+    const candidate = url.trim();
+    if (!URL_PATTERN.test(candidate) || candidate.includes("\n")) return;
+    setInspecting(true);
+    setInspectError(null);
+    try {
+      const result = await invoke<MediaProbe>("inspect_url", { url: candidate });
+      setProbe(result);
+      if (result.subtitleLanguages.length && !result.subtitleLanguages.includes(subtitleLanguage)) {
+        setSubtitleLanguage(result.subtitleLanguages[0]);
+      }
+    } catch (error) {
+      setInspectError(String(error));
+    } finally {
+      setInspecting(false);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -96,11 +140,15 @@ export function UrlForm({ disabled, onSubmit }: Props) {
   }
 
   return (
-    <form className="url-form" onSubmit={handleSubmit}>
+    <form className={`url-form${isDragging ? " drag-active" : ""}`} onSubmit={handleSubmit}>
+      <div className="form-heading">
+        <div><h2>New download</h2><p>Paste one or more video links.</p></div>
+        <kbd>↵ to add</kbd>
+      </div>
       <div className="url-input-wrap">
         <textarea
           className="url-input"
-          placeholder="Paste one or more links, one per line..."
+          placeholder="Paste a YouTube link…"
           value={url}
           onChange={(e) => handleUrlChange(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -110,10 +158,29 @@ export function UrlForm({ disabled, onSubmit }: Props) {
         />
         {autoPasted && <span className="auto-paste-badge">pasted from clipboard</span>}
       </div>
+      {isDragging && <div className="drop-hint">Drop the link to add it</div>}
+
+      <div className="inspect-row">
+        <button type="button" className="inspect-btn" onClick={inspectLink} disabled={disabled || inspecting || !URL_PATTERN.test(url.trim()) || url.includes("\n")}>
+          {inspecting ? "Checking link…" : "Check available options"}
+        </button>
+        {inspectError && <span className="inspect-error">{inspectError}</span>}
+      </div>
+
+      {probe && (
+        <div className="media-probe">
+          <div className="probe-title">{probe.title}</div>
+          <div className="probe-meta">
+            {probe.duration !== null && <span>{Math.floor(probe.duration / 60)} min</span>}
+            {probe.availableHeights.length > 0 && <span>Up to {probe.availableHeights[0]}</span>}
+            {probe.playlistCount !== null && <span>{probe.playlistCount} videos in playlist</span>}
+          </div>
+        </div>
+      )}
 
       <div className="form-row">
         <div className="field-group">
-          <label className="field-label">Format</label>
+          <label className="field-label">Save as</label>
           <div className="format-grid">
             {FORMATS.map((f) => (
               <button
@@ -161,10 +228,19 @@ export function UrlForm({ disabled, onSubmit }: Props) {
         </div>
       </div>
 
+      <div className="advanced-options">
+        <label className="option-toggle"><input type="checkbox" checked={playlist} onChange={(e) => setPlaylist(e.target.checked)} disabled={disabled} /><span>Download playlist</span></label>
+        {playlist && <label className="option-field">Limit <input type="number" min="1" placeholder="All" value={playlistLimit || ""} onChange={(e) => setPlaylistLimit(Math.max(0, Number(e.target.value)))} disabled={disabled} /></label>}
+        <label className="option-toggle"><input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} disabled={disabled} /><span>Include subtitles</span></label>
+        {subtitles && <select className="subtitle-select" value={subtitleLanguage} onChange={(e) => setSubtitleLanguage(e.target.value)} disabled={disabled}>
+          {(probe?.subtitleLanguages.length ? probe.subtitleLanguages : ["en", "es", "fr", "de", "pt"]).map((language) => <option key={language} value={language}>{language}</option>)}
+        </select>}
+      </div>
+
       <button type="submit" className="submit-btn" disabled={disabled || !url.trim()}>
         {(() => {
           const count = url.split("\n").map((u) => u.trim()).filter(Boolean).length;
-          return count > 1 ? `Add ${count} to queue` : "Add to queue";
+          return count > 1 ? `Add ${count} downloads` : "Add download";
         })()}
       </button>
     </form>
